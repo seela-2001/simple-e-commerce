@@ -83,8 +83,8 @@ def delete_product(request , pk):
 
 
 
-@permission_classes([IsAuthenticated])
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def upload_image(request, pk):
     product = get_object_or_404(Product, pk=pk)
     if 'image' not in request.FILES:
@@ -96,8 +96,8 @@ def upload_image(request, pk):
     return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-@permission_classes([IsAuthenticated])
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def search_products(request,search_param ):
     products = Product.objects.filter(
         Q(name__icontains=search_param) | Q(description__icontains=search_param)
@@ -109,14 +109,15 @@ def search_products(request,search_param ):
 
 
 @api_view(["GET"])    
+@permission_classes([IsAuthenticated])
 def get_product_reviews(request , pk) : 
     try : 
         reviews = Review.objects.filter(product_id = pk ) 
         serializer = ReviewSerializer(reviews , many = True) 
-        print(serializer.data)
         return Response(serializer.data , status=200)
     except :
         return Response(status=400)
+
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -255,36 +256,52 @@ def addOrderItems(request):
     try:
         user = request.user
         data = request.data
+
         order_items = data.get('order_items')
         if not order_items:
             return Response({'detail': 'No order items provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create Order
         order = Order.objects.create(
             user=user,
             payment_method=data.get('payment_method'),
             tax_price=data.get('tax_price'),
-            shipping_price=data.get('shipping_price'),
-            total_price=data.get('total_price')
+            shipping_price=data.get('shipping_price', 50),  # Default to 50 if not provided
         )
+
+        # Create Shipping Address
         ShippingAddress.objects.create(
             order=order,
             country=data['shipping_address']['country'],
             city=data['shipping_address']['city'],
             postal_code=data['shipping_address']['postal_code']
         )
+        total_price = 0
+
         for item in order_items:
             try:
-                product = Product.objects.get(id=item['product'])
+                product = Product.objects.get(name=item['product'])
             except Product.DoesNotExist:
-                return Response({'detail': f'Product with id {item["product"]} not found'}, status=status.HTTP_404_NOT_FOUND)
+                return Response({'detail': f'Product with name {item["product"]} not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            item_total = item['quantity'] * item['price']
+            total_price += item_total
+
             order_item = OrderItem.objects.create(
                 order=order,
                 quantity=item['quantity'],
                 price=item['price']
             )
             order_item.product.add(product)
+
             product.count_in_stock -= item['quantity']
             product.save()
+
+        order.total_price = total_price - order.tax_price
+        order.save()
+
         serializer = OrderSerializer(order, many=False)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
     except Exception as ex:
-        return Response({'error':f'{str(ex)}'},status=status.HTTP_400_BAD_REQUEST)
+        return Response({'error': f'{str(ex)}'}, status=status.HTTP_400_BAD_REQUEST)
